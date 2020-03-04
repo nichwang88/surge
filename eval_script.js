@@ -10,14 +10,15 @@
  * 参考下面 __conf 示例
  * 
  * [远程配置]
- * 1.添加注释，格式为：####匹配脚本对应的正则1,匹配脚本对应的正则2 eval 远程脚本的链接
- * 2.修改原脚本路径为 eval_script.js 的脚本路径
- * 参考示例：https://raw.githubusercontent.com/yichahucha/surge/master/sub_script1.conf
+ * 参考示例：https://raw.githubusercontent.com/yichahucha/surge/master/sub_script.conf
  * 
  * [本地配置]
+ * jd 脚本举例
  * 1.添加配置，格式为：匹配脚本对应的正则1,匹配脚本对应的正则2 eval 远程脚本的链接
+ * [local]
+ * ^https?://api\.m\.jd\.com/client\.action\？functionId=(wareBusiness|serverConfig) eval https://raw.githubusercontent.com/yichahucha/surge/master/jd_price.js
+ *
  * 2.修改配置文件原脚本路径为 eval_script.js 的脚本路径
- * 例如修改配置文件 jd 脚本：
  * [rewrite_local]
  * #^https?://api\.m\.jd\.com/client\.action\?functionId=(wareBusiness|serverConfig) url script-response-body jd_price.js
  * ^https?://api\.m\.jd\.com/client\.action\?functionId=(wareBusiness|serverConfig) url script-response-body eval_script.js
@@ -25,22 +26,18 @@
  * hostname = api.m.jd.com
  */
 
-//conf
 const __conf = String.raw`
 
 
 [remote]
-//custom remote...
+// custom remote...
 
 https://raw.githubusercontent.com/yichahucha/surge/master/sub_script.conf
 
 
 
 [local]
-//custom local...
-
-//jd
-//^https?://api\.m\.jd\.com/client\.action\?functionId=(wareBusiness|serverConfig) eval https://raw.githubusercontent.com/yichahucha/surge/master/jd_price.js
+// custom local...
 
 
 `
@@ -49,6 +46,7 @@ const __tool = new ____Tool()
 const __isTask = __tool.isTask
 const __log = false
 const __debug = true
+const __emoji = "🪓"
 
 if (__isTask) {
     const downloadFile = (url) => {
@@ -58,14 +56,14 @@ if (__isTask) {
                 if (!error) {
                     if (response.statusCode == 200) {
                         __tool.write(body, url)
-                        resolve({ body, msg: `🪓${filename} update success` })
+                        resolve({ body, msg: `${__emoji}${filename} update success` })
                         console.log(`Update success: ${url}`)
                     } else {
-                        resolve({ body, msg: `🪓${filename} update fail` })
+                        resolve({ body, msg: `${__emoji}${filename} update fail` })
                         console.log(`Update fail ${response.statusCode}: ${url}`)
                     }
                 } else {
-                    resolve({ body: null, msg: `🪓${filename} update fail` })
+                    resolve({ body: null, msg: `${__emoji}${filename} update fail` })
                     console.log(`Update fail ${error}: ${url}`)
                 }
             })
@@ -110,29 +108,73 @@ if (__isTask) {
 
     getConf()
         .then((conf) => {
-            const parseConf = ____parseConf(conf.content)
+            const confObj = ____parseConf(conf.content)
+            const scriptUrls = Object.keys(confObj)
             const scriptPromises = (() => {
                 let all = []
-                Object.keys(parseConf).forEach((url) => {
+                scriptUrls.forEach((url) => {
                     all.push(downloadFile(url))
                 })
                 return all
             })()
+            const ____sequenceQueue = async (urls) => {
+                let results = []
+                for (let i = 0; i < urls.length; i++) {
+                    let result = await downloadFile(urls[i])
+                    results.push(result)
+                }
+                return results
+            }
+            const ____concurrentQueue = async (promises) => {
+                return new Promise((resolve) => {
+                    Promise.all(promises).then(result => {
+                        resolve(result)
+                    })
+                })
+            }
+            let sliceLength = 20
+            let part1 = scriptPromises.slice(0, sliceLength)
+            let part2 = scriptUrls.slice(sliceLength)
+            __tool.notify("", "", `Start updating ${scriptUrls.length} scripts...`)
             console.log("Start updating script...")
-            Promise.all(scriptPromises).then(result => {
+            ____concurrentQueue(part1).then(result1 => {
+                if (part2.length > 0) {
+                    return new Promise((resolve) => {
+                        ____sequenceQueue(part2).then((result2) => {
+                            resolve(result1.concat(result2))
+                        })
+                    })
+                } else {
+                    return result1
+                }
+            }).then((result) => {
                 console.log("Stop updating script.")
-                const notifyMsg = (() => {
+                const resultMsg = (() => {
                     let msg = conf.msg
                     result.forEach(data => {
                         msg += msg.length > 0 ? "\n" + data.msg : data.msg
                     });
                     return msg
                 })()
-                console.log(notifyMsg)
+                console.log(resultMsg);
+                const resultCount = ((msgs) => {
+                    let success = 0
+                    let fail = 0
+                    msgs.forEach(msg => {
+                        if (msg.match("success")) success++
+                        if (msg.match("fail")) fail++
+                    });
+                    return { success, fail }
+                })
+                let resultMsgs = resultMsg.split("\n")
+                let count = resultCount(resultMsgs)
+                let notifyMsg = `${resultMsgs.slice(0, 20).join("\n")}${resultMsgs.length > 20 ? "\n......" : ""}\n${__emoji}success: ${count.success}   fail: ${count.fail}`
+
                 let lastDate = __tool.read("ScriptLastUpdateDate")
                 lastDate = lastDate ? lastDate : new Date().Format("yyyy-MM-dd HH:mm:ss")
+
                 __tool.notify("Update Done.", `${lastDate} last update.`, `${notifyMsg}`)
-                __tool.write(JSON.stringify(parseConf), "ScriptConfObject")
+                __tool.write(JSON.stringify(confObj), "ScriptConfObject")
                 __tool.write(new Date().Format("yyyy-MM-dd HH:mm:ss"), "ScriptLastUpdateDate")
                 $done()
             })
@@ -156,7 +198,6 @@ if (!__isTask) {
         }
         return s
     })()
-
     if (__script) {
         if (__script.content) {
             eval(__script.content)
@@ -172,9 +213,15 @@ if (!__isTask) {
 }
 
 function ____getConfInfo(conf, type) {
-    const regExp = new RegExp(`(?<=\\[${type}\\])(.|\\n)+?(?=($|\\[))`)
-    const result = conf.match(regExp)[0]
-    return result.split("\n")
+    const rex = new RegExp("\\[" + type + "\\](.|\\n)*?(?=\\n($|\\[))", "g")
+    let result = rex.exec(conf)
+    if (result) {
+        result = result[0].split("\n")
+        result.shift()
+    } else {
+        result = []
+    }
+    return result
 }
 
 function ____parseRemoteConf(conf) {
