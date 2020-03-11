@@ -1,52 +1,21 @@
-/**
- * 脚本管理工具（QuanX 举例）
- * 
- * 一.设置定时任务更新脚本，第一次运行需要手动执行一下更新脚本（Qanx 普通调试模式容易更新失败，使用最新 TF 橙色按钮调试），例如设置每天凌晨更新脚本：
- * [task_local]
- * 0 0 * * * eval_script.js
- * 
- * 二.__conf 配置说明：
- * 
- * 参考下面 __conf 示例
- * 
- * [远程配置]
- * 参考示例：https://raw.githubusercontent.com/yichahucha/surge/master/sub_script.conf
- * 
- * [本地配置]
- * jd 脚本举例
- * 1.添加配置，格式为：匹配脚本对应的正则1 匹配脚本对应的正则2 eval 远程脚本的链接
- * [local]
- * ^https?://api\.m\.jd\.com/client\.action\？functionId=(wareBusiness|serverConfig) eval https://raw.githubusercontent.com/yichahucha/surge/master/jd_price.js
- *
- * 2.修改配置文件原脚本路径为 eval_script.js 的脚本路径
- * [rewrite_local]
- * #^https?://api\.m\.jd\.com/client\.action\?functionId=(wareBusiness|serverConfig) url script-response-body jd_price.js
- * ^https?://api\.m\.jd\.com/client\.action\?functionId=(wareBusiness|serverConfig) url script-response-body eval_script.js
- * [mitm]
- * hostname = api.m.jd.com
- */
-
-
 const __conf = String.raw`
 
 
 [eval_remote]
 // custom remote...
 
-https://raw.githubusercontent.com/yichahucha/surge/master/sub_eval.conf
+https://raw.githubusercontent.com/yichahucha/surge/master/sub_script.conf
 
 
 [eval_local]
 // custom local...
 
-response ^https?://api\.m\.jd\.com/client\.action\?functionId=(wareBusiness|serverConfig) eval https://raw.githubusercontent.com/yichahucha/surge/master/jd_price.js
-
 
 `
 
 const __emoji = "• "
-const __emojiSuccess = "😁"
-const __emojiFail = "😓"
+const __emojiSuccess = "😀"
+const __emojiFail = "🙃"
 const __emojiTasks = "🕐"
 const __emojiDone = "✔️"
 const __showLine = 20
@@ -61,8 +30,8 @@ const __developmentMode = false
 if (__isTask) {
     const ____getConf = (() => {
         return new Promise((resolve) => {
-            const remoteConf = ____removeGarbage(____extractConf(__conf, "eval_remote"))
-            const localConf = ____removeGarbage(____extractConf(__conf, "eval_local"))
+            const remoteConf = ____removeAnnotation(____extractConf(__conf, "eval_remote"))
+            const localConf = ____removeAnnotation(____extractConf(__conf, "eval_local"))
             if (remoteConf.length > 0) {
                 console.log("Start updating conf...")
                 if (__debug) __tool.notify("", "", `Start updating ${remoteConf.length} confs...`)
@@ -121,7 +90,7 @@ if (__isTask) {
             console.log("Start updating script...")
             __tool.notify("", "", `Start updating ${scriptUrls.length} scripts...`)
             ____concurrentQueueLimit(scriptUrls, __concurrencyLimit, (url) => {
-                const urlRegex = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/
+                const urlRegex = /^(https?:\/\/(([a-zA-Z0-9]+-?)+[a-zA-Z0-9]+\.)+[a-zA-Z]+)(:\d+)?(\/.*)?(\?.*)?(#.*)?$/
                 return new Promise((resolve) => {
                     if (urlRegex.test(url)) {
                         ____downloadFile(url).then((data) => {
@@ -131,12 +100,8 @@ if (__isTask) {
                             resolve(data)
                         })
                     } else {
-                        if (__developmentMode) {
-                            __tool.write(url, url)
-                            resolve({ body: url, url, message: `${__emoji}${url} function set success` })
-                        } else {
-                            resolve({ body: "", url, message: `${__emoji}${url} The script url is not available!` })
-                        }
+                        __tool.write(url, url)
+                        resolve({ body: url, url, message: `${__emoji}${url} function set success` })
                     }
                 })
             })
@@ -165,13 +130,13 @@ if (__isTask) {
                     console.log(`${summary}\n${resultInfo.message}\n${lastDate ? lastDate : nowDate}`)
                     __tool.notify(`${__emojiDone}Update Done`, summary, `${detail}\n${__emoji}${lastDate ? lastDate : nowDate}`)
                     __tool.write(nowDate, "ScriptLastUpdateDateKey")
-                    $done()
+                    __tool.done({})
                 })
         })
         .catch((error) => {
-            console.log(error)
+            __tool.done({})
             __tool.notify("[eval_script.js]", "", error)
-            $done()
+            console.log(error)
         })
 }
 
@@ -196,16 +161,16 @@ if (!__isTask) {
                 if (__debug) {
                     try {
                         if (__url.match(match.regular)) {
-                            script = { url: key, match, content: __tool.read(key) }
+                            script = { url: key, match, content: __developmentMode ? key : __tool.read(key) }
                             break
                         }
                     } catch (error) {
                         if (__debug) __tool.notify("[eval_script.js]", "", `Error regular : ${match.regular}\nRequest: ${__url}`)
-                        if (__log) console.log(`${error}\nError regular : ${match.regular}\nRequest: ${__url}`)
+                        throw error
                     }
                 } else {
                     if (__url.match(match.regular)) {
-                        script = { url: key, match, content: __tool.read(key) }
+                        script = { url: key, match, content: __developmentMode ? key : __tool.read(key) }
                         break
                     }
                 }
@@ -223,47 +188,42 @@ if (!__isTask) {
                         try {
                             eval(__script.content)
                             if (__debug) __tool.notify("[eval_script.js]", `${__tool.method} ${__tool.scriptType}==${type}`, `Execute script: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
-                            if (__log) console.log(`Execute script: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
                         } catch (error) {
-                            $done({})
                             if (__debug) __tool.notify("[eval_script.js]", `${__tool.method} ${__tool.scriptType}`, `Script execute error: ${error}\nScript: ${__script.url}\nRegular: ${__script.match}\nRequest: ${__url}`)
-                            if (__log) console.log(`Script execute error : ${error}\nScript: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
+                            throw error
                         }
                     } else {
                         eval(__script.content)
                     }
                 } else {
-                    $done({})
+                    __tool.done({})
                     if (__debug) __tool.notify("[eval_script.js]", `${__tool.method} ${__tool.scriptType}!=${type}`, `Script types do not match! Don't execute script.\nScript: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
-                    if (__log) console.log(`Execute script: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
                 }
             } else {
                 if (__debug) {
                     try {
                         eval(__script.content)
                         if (__debug) __tool.notify("[eval_script.js]", `${__tool.method} ${__tool.scriptType} ${"request&&response"}`, `Execute script: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
-                        if (__log) console.log(`Execute script: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
                     } catch (error) {
-                        $done({})
-                        if (__debug) __tool.notify("[eval_script.js]", `${__tool.method} ${__tool.scriptType}`, `Script execute error: ${error}\nScript: ${__script.url}\nRegular: ${__script.match}\nRequest: ${__url}`)
-                        if (__log) console.log(`Script execute error : ${error}\nScript: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
+                        if (__debug) __tool.notify("[eval_script.js]", `${__tool.method} ${__tool.scriptType}`, `Script execute error: ${error}\nScript: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
+                        throw error
                     }
                 } else {
                     eval(__script.content)
                 }
             }
         } else {
-            $done({})
+            __tool.done({})
             if (__log) console.log(`Script not found: ${__script.url}\nRegular: ${__script.match.regular}\nRequest: ${__url}`)
         }
     } else {
-        $done({})
+        __tool.done({})
         if (__log) console.log(`Script not matched: ${__url}`)
     }
 }
 
 function ____parseDevelopmentModeConf(conf) {
-    const localConf = ____removeGarbage(____extractConf(__conf, "eval_local"))
+    const localConf = ____removeAnnotation(____extractConf(__conf, "eval_local"))
     const result = ____parseConf(localConf)
     return result.obj
 }
@@ -352,12 +312,12 @@ function ____parseRemoteConf(conf) {
     return newLines
 }
 
-function ____removeGarbage(lines) {
+function ____removeAnnotation(lines) {
     if (lines.length > 0) {
         let i = lines.length;
         while (i--) {
-            const line = lines[i]
-            if (line.length == 0 || line.substring(0, 2) == "//") {
+            const line = lines[i].replace(/^\s*/, "")
+            if (line.length == 0 || line.substring(0, 2) == "//" || line.substring(0, 1) == "#") {
                 lines.splice(i, 1)
             }
         }
@@ -368,8 +328,8 @@ function ____removeGarbage(lines) {
 function ____parseConf(lines) {
     let confObj = {}
     for (let i = 0, len = lines.length; i < len; i++) {
-        let line = lines[i].replace(/^\s*/, "")
-        if (line.length > 0 && line.substring(0, 2) != "//") {
+        const line = lines[i].replace(/^\s*/, "")
+        if (line.length > 0) {
             const urlRegex = /.+\s+url\s+.+/
             const evalRegex = /.+\s+eval\s+.+/
             const avaliable = (() => {
@@ -453,6 +413,11 @@ function ____Tool() {
             return "request"
         }
     })()
+    this.done = (obj) => {
+        if (_isQuanX) $done(obj)
+        if (_isSurge) $done(obj)
+        if (_node) console.log("Script Done.");
+    }
     this.notify = (title, subtitle, message) => {
         if (_isQuanX) $notify(title, subtitle, message)
         if (_isSurge) $notification.post(title, subtitle, message)
